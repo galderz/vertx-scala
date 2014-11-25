@@ -2,6 +2,7 @@
 
 @comment{"# Defines a few helper functions"}
 @includeNamed{'common.templ'}
+@includeNamed{'scala-helpers.templ'}
 
 /*\n
  * Copyright 2014 Red Hat, Inc.\n
@@ -35,6 +36,9 @@ import @{importedType}\n
 	@end{}
 @end{}
 \n
+
+@comment{"# Preemptive import"}
+import scala.concurrent.Future\n\n
 
 @comment{"# Generate the Class or Interface/Trait"}
 @code{
@@ -79,83 +83,65 @@ import @{importedType}\n
 @comment{"# Generate the methods"}
 @declare{'writeMethodParams'}
 	@foreach{param : params}
-		@if{param.name.equals("type")}
-			`@{param.name}`: @{toScalaType(param.type)}
-		@end{}
-		@if{!param.name.equals("type")}
-			@{param.name}: @{toScalaType(param.type)}
+		@if{!(param.type.kind == CLASS_HANDLER && param.type.args[0].kind == CLASS_ASYNC_RESULT)}
+			@if{param.name.equals("type")}
+				`@{param.name}`: @{toScalaType(param.type)}
+			@end{}
+			@if{!param.name.equals("type")}
+				@{param.name}: @{toScalaType(param.type)}
+			@end{}
 		@end{}
 	@end{', '}
 @end{}
 
 @code{
-  hasStatic = false;
-  for (method : methods) {
-    if (method.staticMethod) {
-      hasStatic = true;
-    }
-  }
+  objectMethods = staticMethods;
+  hasObject = !objectMethods.isEmpty();
 }
 
-@code{
-  def methodInvocation(target, method) {
-    var invocation = target + '.' + method.name;
-    invocation += '(';
-    var first = true;
-    for (param : method.params) {
-      if (first) {
-        first = false;
-      } else {
-        invocation += ', ';
-      }
-
-      if (param.name.equals("type")) {
-        invocation += '`';
-        invocation += param.name;
-        invocation += '`'
-      } else {
-        invocation += param.name;
-      }
-    }
-    invocation += ')\n';
-    invocation;
-  }
-}
-
-@foreach{method : methods}
+@foreach{method : instanceMethods}
 	@if{!concrete}
-		  def @{method.name}(@includeNamed{'writeMethodParams';params=method.params}): @includeNamed{'writeReturnType';returnType=method.returnType}\n\n
-	@end{}
-	@if{concrete && !method.staticMethod && !method.cacheReturn && method.typeParams.isEmpty()}
-		  def @{method.name}(@includeNamed{'writeMethodParams';params=method.params}): @includeNamed{'writeReturnType';returnType=method.returnType} = {\n
-		    @{methodInvocation('delegate', method);}
-		  }\n\n
-	@end{}
-	@if{concrete && !method.staticMethod && method.cacheReturn && method.typeParams.isEmpty()}
-		  def @{method.name}(@includeNamed{'writeMethodParams';params=method.params}): @includeNamed{'writeReturnType';returnType=method.returnType} = {\n
-		    @{methodInvocation('delegate', method);}
-		  }\n\n
-	@end{}
-	@if{concrete && !method.staticMethod && !method.cacheReturn && !method.typeParams.isEmpty()}
-		  def @{method.name}@includeNamed{'writeTypeParamsWithVariance';typeParams=method.typeParams}(@includeNamed{'writeMethodParams';params=method.params}): @includeNamed{'writeReturnType';returnType=method.returnType} = {\n
-		    @{methodInvocation('delegate', method);}
-		  }\n\n
+		  def @{method.name}(@{methodParams(method);}): @{returnTypeOf(method);}\n\n
+	@else{}
+		@if{method.typeParams.isEmpty() && method.kind == METHOD_FUTURE}
+			  def @{method.name}Async(@{methodParams(method);}): @{returnTypeOf(method);} = {\n
+			    import io.vertx.lang.scala.FutureOps._\n
+			    @{methodInvocationFuture('delegate', method);}
+			  }\n\n
+		@else{method.typeParams.isEmpty()}
+			  def @{method.name}(@{methodParams(method);}): @{returnTypeOf(method);} = {\n
+			    @{methodInvocation('delegate', method);}
+			  }\n\n
+		@else{method.kind == METHOD_FUTURE}
+			  def @{method.name}Async@includeNamed{'writeTypeParamsWithVariance';typeParams=method.typeParams}(@{methodParams(method);}): @{returnTypeOf(method);} = {\n
+			    import io.vertx.lang.scala.FutureOps._\n
+			    @{methodInvocationFuture('delegate', method);}
+			  }\n\n
+		@else{}
+			  def @{method.name}@includeNamed{'writeTypeParamsWithVariance';typeParams=method.typeParams}(@{methodParams(method);}): @{returnTypeOf(method);} = {\n
+			    @{methodInvocation('delegate', method);}
+			  }\n\n
+		@end{}
 	@end{}
 @end{}
 
 }\n
-@if{hasStatic}
+@if{hasObject}
 	\n
 	object @{type.raw.simpleName} {\n
 	\n
-	@foreach{method : methods}
-		@if{method.staticMethod && method.typeParams.isEmpty()}
-			  def @{method.name}(@includeNamed{'writeMethodParams';params=method.params}): @includeNamed{'writeReturnType';returnType=method.returnType} = {\n
+	@foreach{method : objectMethods}
+		@if{method.typeParams.isEmpty() && method.kind == METHOD_FUTURE}
+			  def @{method.name}Async(@{methodParams(method);}): @{returnTypeOf(method);} = {\n
+			    import io.vertx.lang.scala.FutureOps._\n
+			    @{methodInvocationFuture(type.raw.name, method);}
+			  }\n\n
+		@else{method.typeParams.isEmpty()}
+			  def @{method.name}(@{methodParams(method);}): @{returnTypeOf(method);} = {\n
 			    @{methodInvocation(type.raw.name, method);}
 			  }\n\n
-		@end{}
-		@if{method.staticMethod && !method.typeParams.isEmpty()}
-			  def @{method.name}@includeNamed{'writeTypeParamsWithVariance';typeParams=method.typeParams}(@includeNamed{'writeMethodParams';params=method.params}): @includeNamed{'writeReturnType';returnType=method.returnType} = {\n
+		@else{}
+			  def @{method.name}@includeNamed{'writeTypeParamsWithVariance';typeParams=method.typeParams}(@{methodParams(method);}): @{returnTypeOf(method);} = {\n
 			    @{methodInvocation(type.raw.name, method);}
 			  }\n\n
 		@end{}
